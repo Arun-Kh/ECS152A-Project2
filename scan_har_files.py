@@ -18,6 +18,19 @@ def is_third_party(request_url, main_domain):
     )
 
 
+def is_third_party_domain(domain, main_domain):
+    """
+    Check if the given domain is a third-party domain relative to the main domain.
+    """
+    extracted_domain = tldextract.extract(domain)
+    extracted_main = tldextract.extract(main_domain)
+
+    return (
+        extracted_domain.domain != extracted_main.domain
+        or extracted_domain.suffix != extracted_main.suffix
+    )
+
+
 def get_main_domain_from_filename(file_name):
     """
     Extract the main domain from the file name (e.g., 'example.com.har').
@@ -29,10 +42,12 @@ def get_main_domain_from_filename(file_name):
 
 def analyze_har_files(directory):
     """
-    Process all HAR files in the given directory and track third-party requests.
+    Process all HAR files in the given directory and track third-party requests and cookies.
     """
     third_party_requests_summary = defaultdict(lambda: defaultdict(int))
+    third_party_cookies_summary = defaultdict(lambda: defaultdict(int))
     global_third_party_counter = Counter()
+    global_third_party_cookies_counter = Counter()
 
     for file_name in os.listdir(directory):
         if file_name.endswith(".har"):
@@ -55,10 +70,30 @@ def analyze_har_files(directory):
                             third_party_requests_summary[main_domain][domain] += 1
                             global_third_party_counter[domain] += 1
 
+                        # Process response cookies
+                        response = entry.get("response", {})
+                        cookies = response.get("cookies", [])
+                        for cookie in cookies:
+                            cookie_domain = cookie.get("domain", "").lstrip(".")
+                            if cookie_domain and is_third_party_domain(
+                                cookie_domain, main_domain
+                            ):
+                                cookie_name = cookie.get("name", "")
+                                if cookie_name:
+                                    third_party_cookies_summary[main_domain][
+                                        cookie_name
+                                    ] += 1
+                                    global_third_party_cookies_counter[cookie_name] += 1
+
                 except json.JSONDecodeError:
                     print(f"Error decoding JSON in file: {file_name}")
 
-    return third_party_requests_summary, global_third_party_counter
+    return (
+        third_party_requests_summary,
+        global_third_party_counter,
+        third_party_cookies_summary,
+        global_third_party_cookies_counter,
+    )
 
 
 def main():
@@ -67,23 +102,47 @@ def main():
         "Enter the path to the directory containing HAR files: "
     ).strip()
 
+    if not os.path.isdir(har_directory):
+        print("The provided path is not a valid directory.")
+        return
+
     # Analyze HAR files
-    third_party_requests_summary, global_third_party_counter = analyze_har_files(
-        har_directory
-    )
+    (
+        third_party_requests_summary,
+        global_third_party_counter,
+        third_party_cookies_summary,
+        global_third_party_cookies_counter,
+    ) = analyze_har_files(har_directory)
 
     # Output results for each main domain
-    for main_domain, third_party_requests in third_party_requests_summary.items():
+    for main_domain in sorted(third_party_requests_summary.keys()):
         print(f"\nThird-party requests for {main_domain}:")
+        third_party_requests = third_party_requests_summary[main_domain]
         for domain, count in sorted(
             third_party_requests.items(), key=lambda x: x[1], reverse=True
         ):
             print(f"  {domain}: {count} requests")
 
+        # Output third-party cookies for the main domain
+        if main_domain in third_party_cookies_summary:
+            print(f"\nThird-party cookies for {main_domain}:")
+            third_party_cookies = third_party_cookies_summary[main_domain]
+            for cookie, count in sorted(
+                third_party_cookies.items(), key=lambda x: x[1], reverse=True
+            ):
+                print(f"  {cookie}: {count} occurrences")
+        else:
+            print(f"\nNo third-party cookies found for {main_domain}.")
+
     # Output the top 10 most common third-party domains
     print("\nTop 10 most common third-party domains across all files:")
     for domain, count in global_third_party_counter.most_common(10):
-        print(f"{domain}: {count} requests")
+        print(f"  {domain}: {count} requests")
+
+    # Output the top 10 most common third-party cookies
+    print("\nTop 10 most common third-party cookies across all files:")
+    for cookie, count in global_third_party_cookies_counter.most_common(10):
+        print(f"  {cookie}: {count} occurrences")
 
 
 if __name__ == "__main__":
