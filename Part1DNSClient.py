@@ -73,15 +73,16 @@ def dns_client():
     public_dns_resolvers = ["8.8.8.8", "8.8.4.4"]  # Google's public DNS servers
     query = build_dns_query(domain_name)
 
+    total_dns_rtt = 0
     for resolver in public_dns_resolvers:
         try:
             print(f"Querying {resolver}...")
             response, rtt = measure_rtt(resolver, query)
+            total_dns_rtt += rtt
             print(f"RTT to resolver {resolver}: {rtt:.2f} ms")
             ip_addresses = parse_dns_response(response)
             if ip_addresses:
-                print(f"Resolved IP addresses for {domain_name}: {ip_addresses}")
-                return ip_addresses, resolver
+                return ip_addresses, total_dns_rtt
         except socket.timeout:
             print(f"Resolver {resolver} timed out.")
     return None, None
@@ -95,7 +96,7 @@ def http_request(ip_address):
     )
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         start_time = time.time()
-        s.connect((ip_address, 80)) # using port 80 
+        s.connect((ip_address, 80))
         s.sendall(request.encode())
         response = s.recv(4096)
         end_time = time.time()
@@ -104,12 +105,19 @@ def http_request(ip_address):
     print(f"RTT to {ip_address}: {rtt:.2f} ms")
     print("HTTP Response Header:")
     print(response.decode().split("\r\n\r\n")[0])
+    return rtt
 
 
 if __name__ == "__main__":
-    ip_addresses, resolver = dns_client()
+    ip_addresses, total_dns_rtt = dns_client()
+    total_http_rtt = 0
     if ip_addresses:
         for ip in ip_addresses:
-            http_request(ip)
+            rtt = http_request(ip)
+            total_http_rtt += rtt
+        print(f"Total DNS resolution RTT: {total_dns_rtt:.2f} ms")
+        print(f"Total HTTP response RTT: {total_http_rtt:.2f} ms")
     else:
         print("Failed to resolve the domain.")
+
+
